@@ -2,35 +2,51 @@ const router = require('express').Router();
 const pool = require('../db/connection');
 const auth = require('../middleware/auth');
 
-// Get all recipes (Locked down to the logged-in user)
-router.get('/', auth, async (req, res) => {
-  const { ingredients, cuisine } = req.query;
-  
-  // Base query: Only select recipes belonging to the logged-in user
-  let query = `SELECT DISTINCT r.* FROM recipes r WHERE r.user_id = ?`;
-  const params = [req.user.id];
 
+// Get all public recipes
+router.get('/', async (req, res) => {
+  const { ingredients, cuisine, difficulty } = req.query;
+  
+  // Notice we added u.username as author_name and JOIN users u
+  let query = `SELECT DISTINCT r.*, u.username as author_name, ROUND(AVG(rv.rating),1) as avg_rating, COUNT(rv.id) as rating_count
+               FROM recipes r 
+               LEFT JOIN reviews rv ON r.id = rv.recipe_id
+               JOIN users u ON r.user_id = u.id`;
+               
+  const params = [];
+  // STRICTLY ENFORCE privacy: only fetch recipes where is_public is true
+  const wheres = ['r.is_public = TRUE'];
+
+  if (cuisine) { 
+    wheres.push('r.cuisine = ?'); 
+    params.push(cuisine); 
+  }
+  
+  if (difficulty) { 
+    wheres.push('r.difficulty = ?'); 
+    params.push(difficulty); 
+  }
+  
   if (ingredients) {
-    const list = ingredients.split(',').map(s => s.trim()).filter(Boolean);
-    if (list.length > 0) {
-      // Changed from 'IN' to a dynamic list of 'LIKE' statements
-      query += ` AND r.id IN (
-                   SELECT ri.recipe_id FROM recipe_ingredients ri
-                   JOIN ingredients i ON i.id = ri.ingredient_id
-                   WHERE ${list.map(() => `i.name LIKE ?`).join(' OR ')}
-                 )`;
-      // Add wildcard '%' around each search term so 'ginger' matches 'ginger paste'
-      params.push(...list.map(item => `%${item}%`));
+    // Split by comma or space to allow freeform entry
+    const list = ingredients.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+    if (list.length) {
+      list.forEach(kw => {
+        wheres.push(`(
+          r.title LIKE ? OR 
+          EXISTS (
+            SELECT 1 FROM recipe_ingredients ri 
+            JOIN ingredients i ON i.id = ri.ingredient_id 
+            WHERE ri.recipe_id = r.id AND i.name LIKE ?
+          )
+        )`);
+        params.push(`%${kw}%`, `%${kw}%`);
+      });
     }
   }
 
-  if (cuisine) {
-    // We already have a WHERE clause (user_id = ?), so we just use AND
-    query += ` AND r.cuisine = ?`;
-    params.push(cuisine);
-  }
-
-  query += ` ORDER BY r.created_at DESC`;
+  query += ' WHERE ' + wheres.join(' AND ');
+  query += ' GROUP BY r.id ORDER BY r.created_at DESC';
 
   try {
     const [rows] = await pool.execute(query, params);
@@ -40,11 +56,30 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
-// Get single recipe (Locked down so you can't view other people's recipes)
+
+router.get('/mine', auth, async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT r.*, ROUND(AVG(rv.rating),1) as avg_rating, COUNT(rv.id) as rating_count
+       FROM recipes r LEFT JOIN reviews rv ON r.id = rv.recipe_id
+       WHERE r.user_id = ? GROUP BY r.id ORDER BY r.created_at DESC`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: 'DB error', error: err.message });
+  }
+});
+
+
 router.get('/:id', auth, async (req, res) => {
   try {
-    // Check both the recipe ID and that the user owns it
-    const [recipe] = await pool.execute('SELECT * FROM recipes WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+    
+    const [recipe] = await pool.execute(
+      'SELECT * FROM recipes WHERE id = ? AND (user_id = ? OR is_public = TRUE)', 
+      [req.params.id, req.user.id]
+    );
+    
     if (!recipe.length) return res.status(404).json({ message: 'Recipe not found or unauthorized' });
 
     const [ingredients] = await pool.execute(
@@ -66,16 +101,26 @@ router.get('/:id', auth, async (req, res) => {
   }
 });
 
-// Create recipe (auth required)
+
 router.post('/', auth, async (req, res) => {
-  const { title, description, cuisine, cook_time_minutes, servings, image_url, ingredients, steps } = req.body;
+  const { title, description, cuisine, difficulty, is_public, cook_time_minutes, servings, image_url, ingredients, steps } = req.body;
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
     const [result] = await conn.execute(
-      'INSERT INTO recipes (title, description, cuisine, cook_time_minutes, servings, image_url, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [title, description || null, cuisine || null, cook_time_minutes || null, servings || null, image_url || null, req.user.id]
+      'INSERT INTO recipes (title, description, cuisine, difficulty, is_public, cook_time_minutes, servings, image_url, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        title, 
+        description || null, 
+        cuisine || null, 
+        difficulty || null, 
+        is_public || false, 
+        cook_time_minutes || null, 
+        servings || null, 
+        image_url || null, 
+        req.user.id
+      ]
     );
     const recipeId = result.insertId;
 
@@ -111,7 +156,78 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// Delete recipe (auth + owner only)
+
+router.put('/:id', auth, async (req, res) => {
+  const { title, description, cuisine, difficulty, is_public, cook_time_minutes, servings, image_url, ingredients, steps } = req.body;
+  const conn = await pool.getConnection();
+  try {
+    const [rows] = await conn.execute('SELECT user_id FROM recipes WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: 'Recipe not found' });
+    if (rows[0].user_id !== req.user.id) return res.status(403).json({ message: 'Not your recipe' });
+
+    await conn.beginTransaction();
+    await conn.execute(
+      'UPDATE recipes SET title=?, description=?, cuisine=?, difficulty=?, is_public=?, cook_time_minutes=?, servings=?, image_url=? WHERE id=?',
+      [
+        title, 
+        description || null, 
+        cuisine || null, 
+        difficulty || null,
+        is_public || false,
+        cook_time_minutes || null, 
+        servings || null, 
+        image_url || null, 
+        req.params.id
+      ]
+    );
+    
+    await conn.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [req.params.id]);
+    for (const ing of ingredients) {
+      if (!ing.name?.trim()) continue;
+      let [ingRows] = await conn.execute('SELECT id FROM ingredients WHERE name = ?', [ing.name.trim()]);
+      let ingId = ingRows[0]?.id;
+      if (!ingId) {
+        const [r] = await conn.execute('INSERT INTO ingredients (name) VALUES (?)', [ing.name.trim()]);
+        ingId = r.insertId;
+      }
+      await conn.execute(
+        'INSERT INTO recipe_ingredients (recipe_id, ingredient_id, quantity, unit) VALUES (?, ?, ?, ?)',
+        [req.params.id, ingId, ing.quantity || null, ing.unit || null]
+      );
+    }
+    
+    await conn.execute('DELETE FROM steps WHERE recipe_id = ?', [req.params.id]);
+    for (const [i, step] of steps.entries()) {
+      if (!step?.trim()) continue;
+      await conn.execute('INSERT INTO steps (recipe_id, step_number, instruction) VALUES (?, ?, ?)', [req.params.id, i + 1, step.trim()]);
+    }
+    
+    await conn.commit();
+    res.json({ message: 'Updated' });
+  } catch (err) {
+    await conn.rollback();
+    res.status(500).json({ message: 'Failed to update recipe', error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+
+router.patch('/:id/visibility', auth, async (req, res) => {
+  const { is_public } = req.body;
+  try {
+    const [rows] = await pool.execute('SELECT user_id FROM recipes WHERE id=?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: 'Not found' });
+    if (rows[0].user_id !== req.user.id) return res.status(403).json({ message: 'Forbidden' });
+    
+    await pool.execute('UPDATE recipes SET is_public=? WHERE id=?', [is_public, req.params.id]);
+    res.json({ message: 'Updated' });
+  } catch (err) {
+    res.status(500).json({ message: 'DB error', error: err.message });
+  }
+});
+
+
 router.delete('/:id', auth, async (req, res) => {
   try {
     const [rows] = await pool.execute('SELECT user_id FROM recipes WHERE id = ?', [req.params.id]);
@@ -125,48 +241,34 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
-// Update recipe (auth + owner only)
-router.put('/:id', auth, async (req, res) => {
-  const { title, description, cuisine, cook_time_minutes, servings, image_url, ingredients, steps } = req.body;
-  const conn = await pool.getConnection();
-  try {
-    const [rows] = await conn.execute('SELECT user_id FROM recipes WHERE id = ?', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ message: 'Recipe not found' });
-    if (rows[0].user_id !== req.user.id) return res.status(403).json({ message: 'Not your recipe' });
 
-    await conn.beginTransaction();
-    await conn.execute(
-      'UPDATE recipes SET title=?, description=?, cuisine=?, cook_time_minutes=?, servings=?, image_url=? WHERE id=?',
-      [title, description||null, cuisine||null, cook_time_minutes||null, servings||null, image_url||null, req.params.id]
+router.get('/:id/reviews', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT rv.*, u.username as user_name FROM reviews rv
+       JOIN users u ON u.id = rv.user_id
+       WHERE rv.recipe_id = ? ORDER BY rv.created_at DESC`,
+      [req.params.id]
     );
-    await conn.execute('DELETE FROM recipe_ingredients WHERE recipe_id = ?', [req.params.id]);
-    for (const ing of ingredients) {
-      if (!ing.name?.trim()) continue;
-      let [ingRows] = await conn.execute('SELECT id FROM ingredients WHERE name = ?', [ing.name.trim()]);
-      let ingId = ingRows[0]?.id;
-      if (!ingId) {
-        const [r] = await conn.execute('INSERT INTO ingredients (name) VALUES (?)', [ing.name.trim()]);
-        ingId = r.insertId;
-      }
-      await conn.execute(
-        'INSERT INTO recipe_ingredients (recipe_id, ingredient_id, quantity, unit) VALUES (?, ?, ?, ?)',
-        [req.params.id, ingId, ing.quantity||null, ing.unit||null]
-      );
-    }
-    await conn.execute('DELETE FROM steps WHERE recipe_id = ?', [req.params.id]);
-    for (const [i, step] of steps.entries()) {
-      if (!step?.trim()) continue;
-      await conn.execute('INSERT INTO steps (recipe_id, step_number, instruction) VALUES (?, ?, ?)', [req.params.id, i+1, step.trim()]);
-    }
-    await conn.commit();
-    res.json({ message: 'Updated' });
+    res.json(rows);
   } catch (err) {
-    await conn.rollback();
-    res.status(500).json({ message: 'Failed to update recipe', error: err.message });
-  } finally {
-    conn.release();
+    res.status(500).json({ message: 'DB error', error: err.message });
   }
 });
 
-// Fixed: Export moved to the very bottom!
+
+router.post('/:id/reviews', auth, async (req, res) => {
+  const { rating, comment } = req.body;
+  try {
+    await pool.execute(
+      'INSERT INTO reviews (recipe_id, user_id, rating, comment) VALUES (?,?,?,?)',
+      [req.params.id, req.user.id, rating, comment || null]
+    );
+    res.status(201).json({ message: 'Review added' });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ message: 'Already reviewed' });
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;

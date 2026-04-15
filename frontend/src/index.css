@@ -131,3 +131,62 @@ button {
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--paper); }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+/* --- Dark Mode, Skeletons, Toasts --- */
+body.dark {
+  --cream: #121212; --paper: #1e1e1e; --warm-white: #181818;
+  --ink: #f5f5f5; --ink-soft: #cccccc; --ink-muted: #999999; --ink-faint: #555555;
+  --border: #333333; --border-strong: #555555;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+  /* Soften accent light tones for dark backgrounds */
+  --gold-light: #3a2e0e;
+  --spice-light: #3a1010;
+  --herb-light: #0e2e1a;
+}
+
+/* Dark mode: fix input/select/textarea backgrounds & text that browsers override */
+body.dark input,
+body.dark textarea,
+body.dark select {
+  background: var(--warm-white);
+  color: var(--ink);
+  border-color: var(--border);
+  color-scheme: dark;
+}
+
+/* Dark mode: adaptive utility classes */
+body.dark .error-msg {
+  background: #2a0e0e;
+  border-color: #7a2020;
+}
+body.dark .success-msg {
+  background: #0a1f12;
+  border-color: #1a5c30;
+}
+body.dark .tag {
+  background: var(--paper);
+  color: var(--ink-muted);
+  border-color: var(--border);
+}
+body.dark .btn-ghost {
+  border-color: var(--border);
+  color: var(--ink-muted);
+}
+body.dark .btn-ghost:hover {
+  background: var(--paper);
+  border-color: var(--border-strong);
+  color: var(--ink);
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--paper) 25%, var(--border) 50%, var(--paper) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius);
+}
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+
+.toast-container { position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 10px; z-index: 9999; }
+.toast { background: var(--ink); color: var(--cream); padding: 12px 20px; border-radius: var(--radius); font-size: 14px; box-shadow: var(--shadow-md); animation: fadeIn 0.3s ease; }

@@ -208,7 +208,7 @@ export default function Home() {
               <h2 style={{ fontSize: 24, fontWeight: 700, color: 'var(--ink)', margin: 0, fontFamily: 'Playfair Display, serif' }}>
                 {(activeSearch.trim() !== '' || activeCuisine !== 'All') 
                   ? 'Search Results' 
-                  : 'Your Recipes'}
+                  : 'Community Recipes'}
               </h2>
               
               {/* Recipe count now sits nicely right next to the title */}

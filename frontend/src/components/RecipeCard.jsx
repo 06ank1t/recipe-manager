@@ -63,18 +63,30 @@ export default function RecipeCard({ recipe }) {
 
         {/* Content */}
         <div style={{ padding: '16px 18px 18px' }}>
-          <h3 style={{
-            fontFamily: 'Playfair Display, serif',
-            fontSize: 18,
-            fontWeight: 600,
-            color: 'var(--ink)',
-            marginBottom: 6,
-            lineHeight: 1.3,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden'
-          }}>{recipe.title}</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
+            <h3 style={{
+              fontFamily: 'Playfair Display, serif',
+              fontSize: 18,
+              fontWeight: 600,
+              color: 'var(--ink)',
+              flex: 1,
+              lineHeight: 1.3,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden'
+            }}>{recipe.title}</h3>
+            {recipe.avg_rating && (
+              <span style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 600, marginLeft: 8, whiteSpace: 'nowrap' }}>★ {recipe.avg_rating}</span>
+            )}
+          </div>
+
+          {/* Author name */}
+          {recipe.author_name && (
+            <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginBottom: 8 }}>
+              By {recipe.author_name}
+            </div>
+          )}
 
           {recipe.description && (
             <p style={{
