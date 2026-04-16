@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import api from '../api';
 
 const MASTER_INGREDIENTS = [
   // Produce
@@ -50,41 +51,93 @@ const CATEGORY_ICONS = {
 };
 
 export default function ShoppingList() {
-  const [activeItems, setActiveItems] = useState(() => {
-    try {
-      const saved = localStorage.getItem('activeShoppingList');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
+  const [activeItems, setActiveItems] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const [dbSearchQuery, setDbSearchQuery] = useState('');
   const [customName, setCustomName] = useState('');
   const [customCat, setCustomCat] = useState('Other');
   const [hideChecked, setHideChecked] = useState(false);
 
-  useEffect(() => {
-    localStorage.setItem('activeShoppingList', JSON.stringify(activeItems));
-  }, [activeItems]);
+  // ── Load list from DB on mount ───────────────────────────────────────────
+  const fetchList = useCallback(async () => {
+    try {
+      const { data } = await api.get('/shopping-list');
+      setActiveItems(data);
+    } catch (err) {
+      console.error('Failed to load shopping list', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const toggleItem = (id) => setActiveItems(prev => prev.map(i => i.id === id ? { ...i, checked: !i.checked } : i));
-  const removeItem = (id) => setActiveItems(prev => prev.filter(i => i.id !== id));
-  const clearChecked = () => setActiveItems(prev => prev.filter(i => !i.checked));
-  const clearEntireList = () => {
-    if (window.confirm('Are you sure you want to clear your entire active shopping list and start fresh?')) {
-      setActiveItems([]);
+  useEffect(() => { fetchList(); }, [fetchList]);
+
+  // ── Toggle checked state ─────────────────────────────────────────────────
+  const toggleItem = async (item) => {
+    // Optimistic update
+    setActiveItems(prev => prev.map(i => i.id === item.id ? { ...i, checked: !i.checked } : i));
+    try {
+      await api.patch(`/shopping-list/${item.id}`, { checked: !item.checked });
+    } catch {
+      // Revert on failure
+      setActiveItems(prev => prev.map(i => i.id === item.id ? { ...i, checked: item.checked } : i));
     }
   };
 
-  const addFromDatabase = (item) => {
-    if (activeItems.some(i => i.name.toLowerCase() === item.name.toLowerCase() && !i.checked)) return;
-    setActiveItems(prev => [...prev, { id: Date.now() + Math.random(), name: item.name, category: item.category, checked: false }]);
-    setDbSearchQuery('');
+  // ── Remove a single item ─────────────────────────────────────────────────
+  const removeItem = async (id) => {
+    setActiveItems(prev => prev.filter(i => i.id !== id));
+    try {
+      await api.delete(`/shopping-list/${id}`);
+    } catch {
+      fetchList(); // Re-sync on failure
+    }
   };
 
-  const addCustomItem = () => {
+  // ── Clear checked items ──────────────────────────────────────────────────
+  const clearChecked = async () => {
+    setActiveItems(prev => prev.filter(i => !i.checked));
+    try {
+      await api.delete('/shopping-list?checked_only=true');
+    } catch {
+      fetchList();
+    }
+  };
+
+  // ── Clear entire list ────────────────────────────────────────────────────
+  const clearEntireList = async () => {
+    if (!window.confirm('Are you sure you want to clear your entire active shopping list and start fresh?')) return;
+    setActiveItems([]);
+    try {
+      await api.delete('/shopping-list?checked_only=false');
+    } catch {
+      fetchList();
+    }
+  };
+
+  // ── Add from master pantry ────────────────────────────────────────────────
+  const addFromDatabase = async (item) => {
+    if (activeItems.some(i => i.name.toLowerCase() === item.name.toLowerCase() && !i.checked)) return;
+    try {
+      const { data } = await api.post('/shopping-list', { name: item.name, category: item.category });
+      setActiveItems(prev => [...prev, data]);
+      setDbSearchQuery('');
+    } catch (err) {
+      console.error('Failed to add item', err);
+    }
+  };
+
+  // ── Add custom item ───────────────────────────────────────────────────────
+  const addCustomItem = async () => {
     if (!customName.trim()) return;
-    setActiveItems(prev => [...prev, { id: Date.now() + Math.random(), name: customName.trim(), category: customCat, checked: false }]);
-    setCustomName('');
+    try {
+      const { data } = await api.post('/shopping-list', { name: customName.trim(), category: customCat });
+      setActiveItems(prev => [...prev, data]);
+      setCustomName('');
+    } catch (err) {
+      console.error('Failed to add custom item', err);
+    }
   };
 
   const visibleActiveItems = activeItems.filter(i => !hideChecked || !i.checked);
@@ -158,7 +211,9 @@ export default function ShoppingList() {
             </div>
           </div>
 
-          {totalCount === 0 ? (
+          {loading ? (
+            <div className="spinner" style={{ marginTop: 40 }} />
+          ) : totalCount === 0 ? (
             <div style={{ background: 'var(--warm-white)', border: '1px solid var(--border)', padding: '3rem 2rem', borderRadius: 12, textAlign: 'center', color: 'var(--ink-muted)' }}>
               <span style={{ fontSize: '2.5rem', display: 'block', marginBottom: '1rem' }}>🛒</span>
               Your list is empty.<br />Search the database to build your list for today.
@@ -178,7 +233,7 @@ export default function ShoppingList() {
                         borderBottom: idx < catItems.length - 1 ? '1px solid var(--border)' : 'none',
                         background: item.checked ? 'var(--paper)' : 'var(--warm-white)', transition: 'background 0.2s'
                       }}>
-                        <input type="checkbox" checked={item.checked} onChange={() => toggleItem(item.id)} style={{ accentColor: '#1a3a5c', width: 17, height: 17, cursor: 'pointer', flexShrink: 0 }} />
+                        <input type="checkbox" checked={!!item.checked} onChange={() => toggleItem(item)} style={{ accentColor: '#1a3a5c', width: 17, height: 17, cursor: 'pointer', flexShrink: 0 }} />
                         <span style={{ flex: 1, fontSize: '0.95rem', textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? 'var(--ink-faint)' : 'var(--ink)', transition: 'all 0.2s' }}>
                           {item.name}
                         </span>

@@ -164,6 +164,23 @@ LOCK TABLES `saved_recipes` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `shopping_list_items`
+--
+
+DROP TABLE IF EXISTS `shopping_list_items`;
+CREATE TABLE `shopping_list_items` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `name` varchar(200) NOT NULL,
+  `category` varchar(100) DEFAULT 'Other',
+  `checked` tinyint(1) DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `user_id` (`user_id`),
+  CONSTRAINT `shopping_list_items_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+--
 -- Table structure for table `steps`
 --
 

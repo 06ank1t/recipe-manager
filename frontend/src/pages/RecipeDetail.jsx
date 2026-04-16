@@ -139,30 +139,14 @@ export default function RecipeDetail() {
     }
   };
 
-  const addToShoppingList = () => {
+  const addToShoppingList = async () => {
     try {
-      const saved = localStorage.getItem('activeShoppingList');
-      const currentList = saved ? JSON.parse(saved) : [];
-      let addedCount = 0;
-
-      recipe.ingredients.forEach(ing => {
-        // Only add if not already in list (and unchecked)
-        if (!currentList.some(item => item.name.toLowerCase() === ing.name.toLowerCase() && !item.checked)) {
-          currentList.push({
-            id: Date.now() + Math.random(),
-            name: ing.name,
-            category: 'Other', // default fallback
-            checked: false
-          });
-          addedCount++;
-        }
-      });
-
-      if (addedCount > 0) {
-        localStorage.setItem('activeShoppingList', JSON.stringify(currentList));
-        alert(`Added ${addedCount} ingredient(s) to your Shopping List!`);
+      const items = recipe.ingredients.map(ing => ({ name: ing.name, category: 'Other' }));
+      const { data } = await api.post('/shopping-list/bulk', { items });
+      if (data.added > 0) {
+        alert(`Added ${data.added} ingredient(s) to your Shopping List!`);
       } else {
-        alert('All ingredients are already active on your Shopping List.');
+        alert('All ingredients are already on your Shopping List.');
       }
     } catch (err) {
       alert('Failed to add to shopping list.');
